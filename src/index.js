@@ -64,10 +64,13 @@ async function runAction() {
 	for (const [linterId, linter] of Object.entries(linters)) {
 		// Determine whether the linter should be executed on the commit
 		if (core.getInput(linterId) === "true") {
+			core.startGroup(`Run ${linter.name}`);
+
 			const fileExtensions = core.getInput(`${linterId}_extensions`, true);
 			const args = core.getInput(`${linterId}_args`) || "";
 			const prefix = core.getInput(`${linterId}_command_prefix`) || "";
 			const directories = core.getInput(`${linterId}_dir`) || '.'
+			const linterAutoFix = autoFix && core.getInput(`${linterId}_auto_fix`) === "true";
 			const directoriesList = directories.split(",")
 			core.info(`Directories ${linter.name} in ${directories}`);
 			await Promise.all(directoriesList.map(dir => {
@@ -90,10 +93,10 @@ async function runAction() {
 				core.info(`Run ${linter.name} in ${lintDirAbs}`);
 
 				core.info(
-					`Linting ${autoFix ? "and auto-fixing " : ""}files in ${lintDirAbs} ` +
+					`Linting ${linterAutoFix ? "and auto-fixing " : ""}files in ${lintDirAbs} ` +
 					`with ${linter.name} ${args ? `and args: ${args}` : ""}…`,
 				);
-				const lintOutput = linter.lint(lintDirAbs, fileExtList, args, autoFix, prefix);
+				const lintOutput = linter.lint(lintDirAbs, fileExtList, args, linterAutoFix, prefix);
 
 				// Parse output of linting command
 				return linter.parseOutput(context.workspace, lintOutput);
@@ -120,7 +123,7 @@ async function runAction() {
 				hasFailures = true;
 			}
 
-			if (autoFix && commit) {
+			if (linterAutoFix && commit) {
 				// Commit and push auto-fix changes
 				if (git.hasChanges()) {
 					git.commitChanges(commitMessage.replace(/\${linter}/g, linter.name), skipVerification);
