@@ -66,35 +66,54 @@ async function runAction() {
 		if (core.getInput(linterId) === "true") {
 			core.startGroup(`Run ${linter.name}`);
 
-			const fileExtensions = core.getInput(`${linterId}_extensions`, { required: true });
-			const args = core.getInput(`${linterId}_args`);
-			const lintDirRel = core.getInput(`${linterId}_dir`) || ".";
-			const prefix = core.getInput(`${linterId}_command_prefix`);
-			const lintDirAbs = join(context.workspace, lintDirRel);
+			const fileExtensions = core.getInput(`${linterId}_extensions`, true);
+			const args = core.getInput(`${linterId}_args`) || "";
+			const prefix = core.getInput(`${linterId}_command_prefix`) || "";
+			const directories = core.getInput(`${linterId}_dir`) || '.'
 			const linterAutoFix = autoFix && core.getInput(`${linterId}_auto_fix`) === "true";
+			const directoriesList = directories.split(",")
+			core.info(`Directories ${linter.name} in ${directories}`);
+			await Promise.all(directoriesList.map(dir => {
+				const lintDirAbs = join(context.workspace, dir);
 
-			if (!existsSync(lintDirAbs)) {
-				throw new Error(`Directory ${lintDirAbs} for ${linter.name} doesn't exist`);
-			}
-
-			// Check that the linter and its dependencies are installed
-			core.info(`Verifying setup for ${linter.name}…`);
-			await linter.verifySetup(lintDirAbs, prefix);
-			core.info(`Verified ${linter.name} setup`);
+				// Check that the linter and its dependencies are installed
+				core.info(`\nVerifying setup for ${linter.name}…`);
+				return linter.verifySetup(lintDirAbs, prefix);
+			}))
 
 			// Determine which files should be linted
 			const fileExtList = fileExtensions.split(",");
 			core.info(`Will use ${linter.name} to check the files with extensions ${fileExtList}`);
 
 			// Lint and optionally auto-fix the matching files, parse code style violations
-			core.info(
-				`Linting ${linterAutoFix ? "and auto-fixing " : ""}files in ${lintDirAbs} ` +
-					`with ${linter.name} ${args ? `and args: ${args}` : ""}…`,
-			);
-			const lintOutput = linter.lint(lintDirAbs, fileExtList, args, linterAutoFix, prefix);
 
-			// Parse output of linting command
-			const lintResult = linter.parseOutput(context.workspace, lintOutput);
+			const lintResults = directoriesList.map(lintDirRel => {
+				const lintDirAbs = join(context.workspace, lintDirRel);
+
+				core.info(`Run ${linter.name} in ${lintDirAbs}`);
+
+				core.info(
+					`Linting ${linterAutoFix ? "and auto-fixing " : ""}files in ${lintDirAbs} ` +
+					`with ${linter.name} ${args ? `and args: ${args}` : ""}…`,
+				);
+				const lintOutput = linter.lint(lintDirAbs, fileExtList, args, linterAutoFix, prefix);
+
+				// Parse output of linting command
+				return linter.parseOutput(context.workspace, lintOutput);
+			})
+
+			const lintResult = lintResults.reduce((result, lint) => {
+				result.warning.push(...lint.warning)
+				result.error.push(...lint.error)
+				// eslint-disable-next-line
+				result.isSuccess = result.isSuccess && lint.isSuccess
+				return result
+			}, {
+				isSuccess: true,
+				warning: [],
+				error: [],
+			})
+
 			const summary = getSummary(lintResult);
 			core.info(
 				`${linter.name} found ${summary} (${lintResult.isSuccess ? "success" : "failure"})`,
@@ -114,7 +133,7 @@ async function runAction() {
 
 			const lintCheckName = checkName
 				.replace(/\${linter}/g, linter.name)
-				.replace(/\${dir}/g, lintDirRel !== "." ? `${lintDirRel}` : "")
+				.replace(/\${dir}/g, directories !== "." ? `${directories}` : "")
 				.trim();
 
 			checks.push({ lintCheckName, lintResult, summary });
